@@ -1,0 +1,53 @@
+services:
+  db:
+    image: postgres:16
+    container_name: postgres_db
+    platform: linux/arm64 # Ensure DB runs natively
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./reports:/app/reports
+      - ./scripts:/app/scripts
+      - ./.env:/app/.env
+    env_file:
+      - ./.env
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  dbt:
+    build: . # Build from the Dockerfile in the current directory
+    container_name: dbt_container
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      DB_HOST: db
+      DB_PORT: 5432
+      CSV_PATH: ${CSV_PATH}
+    volumes:
+      - ./dbt_project:/usr/app
+      - ./.dbt/profiles.yml:/root/.dbt/profiles.yml
+      - ./data:/app/data
+      - ./src:/app/src
+      - ./scripts:/app/scripts
+      - ./requirements.txt:/app/requirements.txt
+      - ./reports:/app/reports
+      - ./.env:/app/.env
+    env_file:
+      - .env
+    stdin_open: true
+    tty: true
+
+volumes:
+  postgres_data:

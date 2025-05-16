@@ -1,0 +1,62 @@
+version: 2
+
+models:
+  - name: dim_battalion 
+    columns:
+      - name: battalion_key
+        tests:
+          - unique 
+          - not_null 
+      - name: battalion_name
+        tests:
+          - not_null 
+
+  - name: dim_district 
+    columns:
+      - name: district_key
+        tests:
+          - unique
+          - not_null
+      - name: district_name
+        tests:
+          - not_null
+
+  - name: dim_time 
+    columns:
+      - name: time_key
+        tests:
+          - unique
+          - not_null
+      - name: date_day
+        tests:
+          - unique
+          - not_null
+
+  - name: fct_fire_incidents 
+    columns:
+      - name: incident_number
+        tests:
+          - not_null 
+
+      - name: exposure_number 
+        tests:
+          - not_null 
+
+      - name: incident_time_key 
+        tests:
+          - not_null 
+          - relationships: 
+              to: ref('dim_time')
+              field: time_key
+      - name: district_key 
+        tests:
+          - not_null
+          - relationships: 
+              to: ref('dim_district')
+              field: district_key
+      - name: battalion_key 
+        tests:
+          - not_null
+          - relationships: 
+              to: ref('dim_battalion')
+              field: battalion_key

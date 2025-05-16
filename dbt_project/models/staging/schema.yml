@@ -1,0 +1,7 @@
+version: 2
+
+sources:
+  - name: public
+    database: "{{ env_var('DB_NAME') }}"
+    tables:
+      - name: stg_fire_incidents_raw

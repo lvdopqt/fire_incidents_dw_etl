@@ -1,0 +1,23 @@
+# Ignore Python cache directories and files
+__pycache__/
+*.pyc
+
+# Ignore dbt artifacts and packages
+target/
+dbt_packages/
+logs/
+
+# Ignore Docker volumes
+# Assuming your postgres data volume is named 'postgres_data'
+# based on the docker-compose.yml
+postgres_data/
+
+# Ignore environment file containing secrets
+.env
+
+# Ignore the data directory containing large source files
+data/
+
+# Ignore OS-specific files
+.DS_Store # macOS
+Thumbs.db # Windows
