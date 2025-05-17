@@ -1,0 +1,10 @@
+# .sqlfluff
+[sqlfluff]
+dialect = postgres
+newline = consistent
+
+[sqlfluff:rules]
+L001 = disabled
+
+# Configure a rule
+L010 = comma_style = leading

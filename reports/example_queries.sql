@@ -10,8 +10,8 @@
 SELECT
     t.year,
     COUNT(f.incident_number) AS total_incidents
-FROM public.fct_fire_incidents f
-JOIN public.dim_time t ON f.incident_time_key = t.time_key
+FROM public.fct_fire_incidents AS f
+INNER JOIN public.dim_time AS t ON f.incident_time_key = t.time_key
 GROUP BY t.year
 ORDER BY t.year;
 
@@ -22,11 +22,12 @@ SELECT
     t.year,
     f.primary_situation,
     COUNT(f.incident_number) AS total_incidents
-FROM public.fct_fire_incidents f
-JOIN public.dim_time t ON f.incident_time_key = t.time_key
-WHERE f.primary_situation IS NOT NULL -- Exclude incidents with no primary situation
+FROM public.fct_fire_incidents AS f
+INNER JOIN public.dim_time AS t ON f.incident_time_key = t.time_key
+-- Exclude incidents with no primary situation
+WHERE f.primary_situation IS NOT NULL
 GROUP BY t.year, f.primary_situation
-ORDER BY t.year, total_incidents DESC;
+ORDER BY t.year ASC, total_incidents DESC;
 
 
 -- Query 3: Average number of suppression units per battalion
@@ -35,9 +36,9 @@ ORDER BY t.year, total_incidents DESC;
 SELECT
     b.battalion_name,
     AVG(f.suppression_units) AS average_suppression_units
-FROM public.fct_fire_incidents f
-JOIN public.dim_battalion b ON f.battalion_key = b.battalion_key
-WHERE f.suppression_units IS NOT NULL -- Exclude incidents with no suppression units reported
+FROM public.fct_fire_incidents AS f
+INNER JOIN public.dim_battalion AS b ON f.battalion_key = b.battalion_key
+-- Exclude incidents with no suppression units reported
+WHERE f.suppression_units IS NOT NULL
 GROUP BY b.battalion_name
 ORDER BY average_suppression_units DESC;
-

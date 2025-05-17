@@ -1,7 +1,7 @@
 SELECT
     incident_number,
     exposure_number,
-    COUNT(*) as num_occurrences
+    COUNT(*) AS num_occurrences
 
 FROM {{ ref('fct_fire_incidents') }}
 
