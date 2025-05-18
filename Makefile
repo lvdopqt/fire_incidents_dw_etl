@@ -85,3 +85,16 @@ run-queries: up db-health
 	# Query 3: Average number of suppression units per battalion
 	docker compose exec db bash -c "psql -U admin -d fire_dwh_db -c \"SELECT b.battalion_name, AVG(f.suppression_units) AS average_suppression_units FROM public.fct_fire_incidents f JOIN public.dim_battalion b ON f.battalion_key = b.battalion_key WHERE f.suppression_units IS NOT NULL GROUP BY b.battalion_name ORDER BY average_suppression_units DESC;\" > /app/reports/query_3_avg_units_per_battalion.txt"
 	@echo "Example SQL queries finished. Results saved in the reports/ directory."
+
+# Runs the pytest test suite inside the dbt container
+test: up db-health
+	@echo "Sourcing .env for Makefile environment..."
+	# Ensure .env variables are available for tests (especially DB connection details)
+	- export $(cat .env | xargs)
+	@echo ".env sourced."
+
+	@echo "Running tests inside 'dbt' container..."
+	# Assuming your code and test file (e.g., test_etl_script.py) are mounted to /usr/app
+	# Adjust the 'cd /usr/app' path if your docker-compose.yml maps your project code elsewhere
+	docker compose exec dbt bash -c "cd /app && pytest -v -s"
+	@echo "Test execution finished."

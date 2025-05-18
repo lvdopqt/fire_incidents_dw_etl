@@ -2,24 +2,26 @@ import os
 import pandas as pd
 import psycopg2
 from psycopg2 import sql
-from sqlalchemy import create_engine # Still needed for initial connection string format
-from sqlalchemy.types import Text # Still needed for potential DDL generation logic
+# from sqlalchemy import create_engine # Not strictly needed for this psycopg2-focused script
+# from sqlalchemy.types import Text # Not strictly needed if we use TEXT for all columns initially
 import re
-import io # Import io module for in-memory text handling
-import csv # Import csv module for quoting options
+import io
+import csv
+from contextlib import contextmanager # Import contextmanager
 
 # --- Configuration ---
+# Use descriptive variable names
 DB_USER = os.getenv('DB_USER')
 DB_PASSWORD = os.getenv('DB_PASSWORD')
 DB_NAME = os.getenv('DB_NAME')
 DB_HOST = os.getenv('DB_HOST')
 DB_PORT = os.getenv('DB_PORT')
-CSV_PATH = os.getenv('CSV_PATH')
+CSV_FILE_PATH = os.getenv('CSV_PATH') # Renamed for clarity
 
 RAW_STAGING_TABLE_NAME = 'stg_fire_incidents_raw'
 
 # Define the chunk size for reading the CSV and loading to DB
-CHUNK_SIZE = 10000 # Read and load in chunks of 10,000 rows
+CSV_CHUNK_SIZE = 10000
 
 # Define the separator and quoting for the in-memory CSV buffer used by copy_from
 COPY_SEP = '\t' # Use tab as separator for the in-memory buffer
@@ -27,174 +29,256 @@ COPY_QUOTECHAR = '"' # Use double quote as quote character
 COPY_QUOTING = csv.QUOTE_MINIMAL # Only quote fields with special characters
 
 # --- Validation ---
-if not all([DB_USER, DB_PASSWORD, DB_NAME, DB_HOST, DB_PORT, CSV_PATH]):
-    print("Error: Database environment variables or CSV_PATH are not configured.")
-    print("Please check your .env file or docker-compose.yml configuration.")
-    exit(1)
+def validate_configuration():
+    """Validates that required environment variables are set."""
+    required_vars = {
+        'DB_USER': DB_USER,
+        'DB_PASSWORD': DB_PASSWORD,
+        'DB_NAME': DB_NAME,
+        'DB_HOST': DB_HOST,
+        'DB_PORT': DB_PORT,
+        'CSV_PATH': CSV_FILE_PATH
+    }
+    missing_vars = [var for var, value in required_vars.items() if not value]
+    if missing_vars:
+        print(f"Error: Missing required environment variables: {', '.join(missing_vars)}")
+        print("Please check your .env file or docker-compose.yml configuration.")
+        return False
+    if not os.path.exists(CSV_FILE_PATH):
+         print(f"Error: CSV file not found at {CSV_FILE_PATH}")
+         return False
+    return True
 
-# --- Main ETL-L Function ---
-def extract_and_load():
-    """
-    Extracts data from a CSV file in chunks using Pandas and loads each chunk
-    into a raw staging table in PostgreSQL using psycopg2.copy_from.
-    Uses a tab separator for the in-memory buffer for better handling of data with commas.
-    This creates the table if it doesn't exist and replaces the existing data daily.
-    Includes progress indication during the load process.
-    Handles large files by processing them in chunks more memory efficiently.
-    """
-    print(f"Starting Extract and Load process for {CSV_PATH} in chunks using copy_from (Tab Separator)...")
-
-    if not os.path.exists(CSV_PATH):
-        print(f"Error [Extract]: CSV file not found at {CSV_PATH}")
-        exit(1)
-
+# --- Database Connection Context Manager ---
+@contextmanager
+def get_db_connection(dbname, user, password, host, port):
+    """Provides a database connection and cursor using a context manager."""
     conn = None
     cursor = None
-    engine = None
     try:
-        print("Connecting to PostgreSQL database...")
-        # Create the connection using parameters from environment variables
         conn = psycopg2.connect(
-            dbname=DB_NAME,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            host=DB_HOST,
-            port=DB_PORT
+            dbname=dbname,
+            user=user,
+            password=password,
+            host=host,
+            port=port
         )
-        conn.autocommit = False # Manage transactions manually
+        conn.autocommit = False # Manual transaction management
         cursor = conn.cursor()
         print("Database connection successful.")
-
-        # Create SQLAlchemy engine (primarily for connection string format if needed elsewhere)
-        # engine = create_engine(f'postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}')
-
-
-        # --- Create table if it doesn't exist (read first chunk to get columns) ---
-        print(f"Checking/Creating table {RAW_STAGING_TABLE_NAME} if it does not exist...")
-        # Read just the first chunk to infer column names for table creation DDL
-        try:
-            # Use a small chunksize just for reading headers/first row
-            header_chunk_iterator = pd.read_csv(CSV_PATH, chunksize=1, low_memory=False)
-            header_chunk_df = next(header_chunk_iterator)
-            print("Successfully read first row to determine column names.")
-
-            # Clean up column names for SQL compatibility using Pandas string methods
-            print("Cleaning up column names for SQL compatibility...")
-            header_chunk_df.columns = header_chunk_df.columns.str.replace('[^0-9a-zA-Z_]+', '', regex=True).str.lower()
-            print("Column names cleaned.")
-
-            # Generate column definitions using psycopg2.sql objects from cleaned first chunk columns
-            column_definitions = [sql.Composed([sql.Identifier(col), sql.SQL(' TEXT')]) for col in header_chunk_df.columns]
-            columns_composed = sql.SQL(', ').join(column_definitions)
-
-            # Compose the final CREATE TABLE query using sql.SQL and sql.Identifier
-            create_table_sql = sql.SQL("CREATE TABLE IF NOT EXISTS {table} ({columns})").format(
-                table=sql.Identifier(RAW_STAGING_TABLE_NAME),
-                columns=columns_composed
-            )
-
-            # Execute the CREATE TABLE query
-            cursor.execute(create_table_sql)
-            print(f"Table {RAW_STAGING_TABLE_NAME} checked/created.")
-
-        except StopIteration:
-            print("Warning [Extract]: CSV file is empty or only contains headers. No data to load.")
-            return # Exit function if file is empty
-        except Exception as e:
-            print(f"Error during initial chunk read or table creation: {e}")
-            exit(1)
-        # --- END Create table ---
-
-
-        # Truncate the staging table before loading
-        print(f"Truncating staging table: {RAW_STAGING_TABLE_NAME}")
-        truncate_table_sql = sql.SQL("TRUNCATE TABLE {table}").format(
-            table=sql.Identifier(RAW_STAGING_TABLE_NAME)
-        )
-        cursor.execute(truncate_table_sql)
-        print("Staging table truncated.")
-
-        # --- Load data from CSV in chunks using copy_from with progress ---
-        print(f"Loading data into {RAW_STAGING_TABLE_NAME} in chunks of {CHUNK_SIZE} rows using copy_from (Tab Separator)...")
-
-        # Read the CSV in chunks using the chunksize parameter
-        # Start from the beginning of the file again
-        csv_chunk_iterator = pd.read_csv(CSV_PATH, chunksize=CHUNK_SIZE, low_memory=False)
-
-        chunk_count = 0
-        total_rows_loaded = 0
-
-        for chunk_df in csv_chunk_iterator:
-            chunk_count += 1
-            print(f"Processing and loading chunk {chunk_count} ({len(chunk_df)} rows)...")
-
-            if chunk_df.empty:
-                print(f"Warning: Chunk {chunk_count} is empty. Skipping.")
-                continue # Skip empty chunks
-
-            # Clean up column names for the current chunk (important if headers aren't consistent or for safety)
-            chunk_df.columns = chunk_df.columns.str.replace('[^0-9a-zA-Z_]+', '', regex=True).str.lower()
-
-            # Prepare data for copy_from: convert DataFrame chunk to CSV string in memory
-            # Use .to_csv with index=False and header=False
-            # Use the defined COPY_SEP and COPY_QUOTING
-            csv_buffer = io.StringIO()
-            chunk_df.to_csv(
-                csv_buffer,
-                index=False,
-                header=False,
-                sep=COPY_SEP,
-                quoting=COPY_QUOTING,
-                quotechar=COPY_QUOTECHAR
-            )
-            csv_buffer.seek(0) # Rewind the buffer to the beginning
-
-            # Use copy_from to load the data chunk
-            # Specify the table name, file-like object, separator, and format
-            try:
-                cursor.copy_from(
-                    csv_buffer,
-                    RAW_STAGING_TABLE_NAME,
-                    sep=COPY_SEP, # Use the defined separator
-                    columns=chunk_df.columns.tolist() # Pass the list of cleaned column names
-                )
-                total_rows_loaded += len(chunk_df)
-                print(f"Chunk {chunk_count} loaded using copy_from. Total rows loaded so far: {total_rows_loaded}")
-            except Exception as e:
-                 print(f"Error loading chunk {chunk_count} using copy_from: {e}")
-                 # Decide whether to exit or continue on chunk error
-                 # For this test, let's exit on error
-                 raise e # Re-raise the exception to be caught by the main except block
-
-
-        print(f"Finished processing all chunks. Total rows loaded: {total_rows_loaded}")
-        print("Initial load to raw staging table completed.")
-        # --- END Load with progress ---
-
-        # Commit the entire transaction (CREATE IF NOT EXISTS, TRUNCATE, and all COPYs)
-        conn.commit()
-        print("Transaction committed successfully.")
-        print(f"Extract and Load process for {RAW_STAGING_TABLE_NAME} finished.")
-
+        yield conn, cursor
     except psycopg2.OperationalError as e:
-        print(f"Error [Load]: Database connection or operation failed: {e}")
+        print(f"Error: Database connection failed: {e}")
         if conn:
-            conn.rollback() # Rollback transaction on error
-        exit(1)
+            conn.rollback() # Ensure rollback on connection error before yielding
+        raise # Re-raise the exception
     except Exception as e:
-        print(f"Error [Load]: An unexpected error occurred during the load process: {e}")
+        print(f"An unexpected error occurred during database connection: {e}")
         if conn:
-            conn.rollback() # Rollback transaction on error
-        exit(1)
+            conn.rollback() # Ensure rollback on other errors before yielding
+        raise # Re-raise the exception
     finally:
-        # Ensure resources are closed
         if cursor:
             cursor.close()
         if conn:
             conn.close()
             print("Database connection closed.")
-        # Note: SQLAlchemy engine doesn't need explicit closing in this simple case
 
-# Execute the main function if the script is run directly
+# --- Helper Functions ---
+def clean_column_names(columns):
+    """Cleans column names for SQL compatibility."""
+    # Replace non-alphanumeric characters (excluding underscore) with nothing, then lowercase
+    # Use str.lower() first for consistent handling of case before regex
+    cleaned_columns = columns.str.lower().str.replace('[^0-9a-zA-Z_]+', '', regex=True)
+    # Handle potential leading/trailing underscores or multiple underscores resulting from cleaning
+    # This part can be refined based on specific needs, but the basic replace is often sufficient.
+    return cleaned_columns
+
+
+def dataframe_to_copy_buffer(df, sep, quotechar, quoting):
+    """Converts a DataFrame chunk to an in-memory text buffer for psycopg2 copy_from."""
+    csv_buffer = io.StringIO()
+    df.to_csv(
+        csv_buffer,
+        index=False,
+        header=False, # copy_from doesn't need header in the buffer
+        sep=sep,
+        quoting=quoting,
+        quotechar=quotechar
+    )
+    csv_buffer.seek(0) # Rewind the buffer
+    return csv_buffer
+
+# --- Core Database Operations ---
+
+def create_staging_table_if_not_exists(cursor, csv_path, table_name):
+    """
+    Reads the first chunk of the CSV to infer column names, cleans them,
+    and creates the staging table if it doesn't exist.
+    Returns the list of cleaned column names.
+    """
+    print(f"Checking/Creating table {table_name} if it does not exist...")
+    try:
+        # Use a small chunksize just for reading headers/first row
+        header_chunk_iterator = pd.read_csv(csv_path, chunksize=1, low_memory=False)
+        header_chunk_df = next(header_chunk_iterator)
+        print("Successfully read first row to determine column names.")
+
+        # Clean up column names
+        cleaned_columns = clean_column_names(header_chunk_df.columns)
+        cleaned_column_list = cleaned_columns.tolist()
+        print(f"Cleaned column names: {cleaned_column_list}")
+
+        # Generate column definitions using psycopg2.sql objects (all TEXT for simplicity)
+        column_definitions = [sql.Composed([sql.Identifier(col), sql.SQL(' TEXT')]) for col in cleaned_column_list]
+        columns_composed = sql.SQL(', ').join(column_definitions)
+
+        # Compose the final CREATE TABLE query using sql.SQL and sql.Identifier
+        create_table_sql = sql.SQL("CREATE TABLE IF NOT EXISTS {table} ({columns})").format(
+            table=sql.Identifier(table_name),
+            columns=columns_composed
+        )
+
+        # Execute the CREATE TABLE query
+        cursor.execute(create_table_sql)
+        print(f"Table {table_name} checked/created.")
+        return cleaned_column_list
+
+    except StopIteration:
+        print("Warning: CSV file is empty or only contains headers. No data to infer schema or load.")
+        return [] # Return empty list if file is effectively empty
+    except Exception as e:
+        print(f"Error during initial chunk read or table creation: {e}")
+        raise # Re-raise the exception
+
+def truncate_table(cursor, table_name):
+    """Truncates the specified table."""
+    print(f"Truncating staging table: {table_name}")
+    truncate_table_sql = sql.SQL("TRUNCATE TABLE {table}").format(
+        table=sql.Identifier(table_name)
+    )
+    cursor.execute(truncate_table_sql)
+    print("Staging table truncated.")
+
+def load_chunk_into_db(cursor, df, table_name, columns, sep, quotechar, quoting):
+    """Loads a single DataFrame chunk into the database using copy_from."""
+    if df.empty:
+        print("Warning: Skipping empty chunk.")
+        return 0 # Indicate 0 rows loaded for this chunk
+
+    # Prepare data for copy_from using the helper function
+    csv_buffer = dataframe_to_copy_buffer(df, sep, quotechar, quoting)
+
+    # Use copy_from to load the data chunk
+    try:
+        # Ensure columns passed to copy_from match the order/names in the DataFrame
+        cursor.copy_from(
+            csv_buffer,
+            table_name,
+            sep=sep,
+            columns=columns # Pass the list of cleaned column names
+        )
+        rows_loaded = len(df)
+        print(f"Loaded {rows_loaded} rows into {table_name} using copy_from.")
+        return rows_loaded
+    except Exception as e:
+         print(f"Error loading chunk using copy_from: {e}")
+         # Decide whether to raise or log and continue. Raising stops the process.
+         raise e # Re-raise the exception
+
+def load_csv_in_chunks(cursor, csv_path, table_name, chunk_size, columns, sep, quotechar, quoting):
+    """Reads CSV in chunks and loads each chunk into the database."""
+    print(f"Loading data into {table_name} in chunks of {chunk_size} rows using copy_from (Tab Separator)...")
+
+    total_rows_loaded = 0
+    chunk_count = 0
+
+    # Read the CSV in chunks
+    csv_chunk_iterator = pd.read_csv(csv_path, chunksize=chunk_size, low_memory=False)
+
+    for chunk_df in csv_chunk_iterator:
+        chunk_count += 1
+        print(f"Processing chunk {chunk_count} ({len(chunk_df)} rows)...")
+
+        # Clean up column names for the current chunk (important if headers aren't perfectly consistent)
+        # Although we got column names from the first chunk, re-cleaning each chunk's columns
+        # ensures consistency, especially important if low_memory=False isn't fully preventing dtype issues.
+        chunk_df.columns = clean_column_names(chunk_df.columns)
+
+        # Ensure the chunk DataFrame columns match the expected cleaned column names
+        # This check is important if the file structure is inconsistent
+        if not list(chunk_df.columns) == columns:
+             print(f"Warning: Columns in chunk {chunk_count} do not match the expected table columns.")
+             print(f"Expected: {columns}")
+             print(f"Found: {list(chunk_df.columns)}")
+             # Decide how to handle mismatch: skip chunk, attempt remapping, or raise error.
+             # For now, we'll assume consistency after cleaning and proceed, but this is a potential failure point.
+             # If remapping is needed, pandas.DataFrame.rename could be used.
+
+        try:
+            rows_loaded_in_chunk = load_chunk_into_db(
+                cursor,
+                chunk_df,
+                table_name,
+                columns, # Pass the expected cleaned columns
+                sep,
+                quotechar,
+                quoting
+            )
+            total_rows_loaded += rows_loaded_in_chunk
+            print(f"Chunk {chunk_count} processed. Total rows loaded so far: {total_rows_loaded}")
+        except Exception as e:
+            print(f"Error processing chunk {chunk_count}: {e}")
+            # Stop the process if a chunk fails to load
+            raise e # Re-raise the exception
+
+    print(f"Finished processing all chunks. Total rows loaded: {total_rows_loaded}")
+
+# --- Main ETL Orchestration ---
+def run_etl():
+    """
+    Orchestrates the ETL-like process: connects to DB, creates table,
+    truncates table, loads data in chunks, and manages transactions.
+    """
+    if not validate_configuration():
+        return # Exit if config is invalid
+
+    print(f"Starting ETL process for {CSV_FILE_PATH}...")
+
+    # Use the context manager for database connection
+    try:
+        with get_db_connection(DB_NAME, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT) as (conn, cursor):
+            # 1. Create table if it doesn't exist and get cleaned columns
+            cleaned_columns = create_staging_table_if_not_exists(cursor, CSV_FILE_PATH, RAW_STAGING_TABLE_NAME)
+
+            if not cleaned_columns:
+                 print("No columns found in CSV, exiting.")
+                 return # Exit if CSV is empty or header-only
+
+            # 2. Truncate the staging table
+            truncate_table(cursor, RAW_STAGING_TABLE_NAME)
+
+            # 3. Load data in chunks
+            load_csv_in_chunks(
+                cursor,
+                CSV_FILE_PATH,
+                RAW_STAGING_TABLE_NAME,
+                CSV_CHUNK_SIZE,
+                cleaned_columns, # Pass the cleaned columns
+                COPY_SEP,
+                COPY_QUOTECHAR,
+                COPY_QUOTING
+            )
+
+            # 4. Commit the transaction if everything succeeded
+            conn.commit()
+            print("Transaction committed successfully.")
+            print("ETL process finished.")
+
+    except Exception as e:
+        print(f"ETL process failed: {e}")
+        # The context manager handles rollback and closing on exceptions
+
+# --- Script Entry Point ---
 if __name__ == "__main__":
-    extract_and_load()
+    run_etl()

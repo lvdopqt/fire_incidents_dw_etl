@@ -107,3 +107,8 @@ CSV_PATH=/app/data/Fire_Incidents_20250515.csv
 5.  **Access the Data Warehouse:** You can connect to the PostgreSQL database using your preferred SQL client and the credentials from your `.env` file. The modeled data will be available in the `public` schema (or the schema configured in your dbt `profiles.yml`).
 
 6.  **Example Queries:** Refer to the `reports/example_queries.sql` file for example SQL queries. The output of the `make run-queries` command will be saved in `.txt` files within the `reports/` directory.
+
+7.  **Run Unit Tests:** Use the Makefile to execute tests for the `extract_load` process.
+    ```bash
+    make test
+    ```
