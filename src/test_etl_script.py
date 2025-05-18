@@ -7,7 +7,6 @@ import io
 import csv
 from unittest.mock import MagicMock, patch, mock_open
 
-# Assuming your modularized script is in a file named 'extract_load.py'
 import extract_load as etl_script
 
 # --- Unit Tests (Passing) ---
