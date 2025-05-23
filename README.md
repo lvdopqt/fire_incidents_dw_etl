@@ -119,7 +119,7 @@ CSV_PATH=/app/data/Fire_Incidents_20250515.csv
 
 ---
 
-## 🧑‍💻 Usage
+## Usage
 
 ### Prerequisites
 
