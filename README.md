@@ -146,6 +146,29 @@ This will:
 - Run `dbt run` to build models.
 - Run `dbt test` for validations.
 
+## Accessing the Prefect UI and Triggering Flows
+
+The Prefect UI provides a graphical interface to monitor your flows, deployments, and work pools. It also allows you to manually trigger runs of your deployed flows.
+
+### Accessing the UI
+
+Once your Docker services are up and running (`make up`), you can access the Prefect UI by navigating to:
+
+[http://localhost:4200](http://localhost:4200)
+
+### Manually Triggering a Flow Run via the UI
+
+To manually trigger a run of the `fire-incidents-full-pipeline` deployment:
+
+1.  **Navigate to Deployments:** In the Prefect UI, click on "Deployments" in the left-hand navigation bar.
+2.  **Select the Deployment:** Find and click on `fire-incidents-full-pipeline-deployment` in the list.
+3.  **Initiate a Run:** Click the "Run" button (usually located in the top right corner of the deployment details page).
+4.  **Choose "Quick Run":** From the dropdown options, select "Quick Run".
+5.  **Set Parameters:** A dialog box will appear allowing you to set parameters for this specific run. Ensure the `db_port` parameter is set to `5432`.
+6.  **Submit the Run:** Click "Submit" to start the flow run.
+
+You can then monitor the progress of your flow run under the "Flow Runs" section in the UI.
+
 ### Run Example Queries
 
 ```bash
