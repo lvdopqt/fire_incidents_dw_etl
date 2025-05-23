@@ -10,11 +10,10 @@ SELECT
     zipcode::TEXT AS zipcode,
     battalion_name::TEXT AS battalion_name,
     station_area::TEXT AS station_area,
-    supervisor_district::TEXT AS district_name, -- Renamed to district_name here
+    supervisor_district::TEXT AS district_name,
     neighborhood_district::TEXT AS neighborhood_district_name,
     geo_point::TEXT AS geo_point,
     data_as_of_dttm::TIMESTAMP AS data_as_of_dttm,
-    -- Crucial timestamp from ingestion
     data_loaded_at_dttm::TIMESTAMP AS data_loaded_at_dttm,
 
     suppression_units::INT AS suppression_units,

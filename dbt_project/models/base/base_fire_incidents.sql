@@ -67,7 +67,7 @@ SELECT
     supervisordistrict::TEXT AS supervisor_district,
     neighborhood_district::TEXT AS neighborhood_district,
     point::TEXT AS geo_point,
-    data_as_of::TIMESTAMP AS data_as_of_dttm, -- Removed TRIM and NULLIF
-    data_loaded_at::TIMESTAMP AS data_loaded_at_dttm -- Removed TRIM and NULLIF
+    data_as_of::TIMESTAMP AS data_as_of_dttm,
+    data_loaded_at::TIMESTAMP AS data_loaded_at_dttm
 
 FROM {{ source('fire_department_raw', 'stg_fire_incidents_raw') }}

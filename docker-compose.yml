@@ -1,5 +1,4 @@
 services:
-  # PostgreSQL Database for your Fire Incidents DWH
   db:
     image: postgres:15-alpine
     container_name: fire_incidents_db
@@ -21,7 +20,6 @@ services:
     networks:
       - prefect-network
 
-  # Prefect Server (now using SQLite)
   prefect-server:
     image: prefecthq/prefect:2-latest
     container_name: prefect_server
@@ -30,14 +28,12 @@ services:
       - "4200:4200"
     environment:
       PREFECT_LOGGING_LEVEL: INFO
-      # Prefect will default to an SQLite database file inside its /root/.prefect directory
     volumes:
-      - prefect-server-data:/root/.prefect # This volume will now store your SQLite DB file
+      - prefect-server-data:/root/.prefect
     restart: always
     networks:
       - prefect-network
 
-  # Prefect Agent
   prefect-agent:
     build:
       context: .
@@ -45,7 +41,7 @@ services:
     depends_on:
       prefect-server:
         condition: service_started
-      db: # Agent still depends on your DWH database
+      db:
         condition: service_healthy
     command: >
       /bin/bash -c "
@@ -74,30 +70,25 @@ services:
       PYTHONPATH: /app
       PROJECT_ROOT: /app
       STREAMLIT_SHOW_WARNING_ON_DIRECT_EXECUTION: "false"
-      # Pass DB credentials to the agent so your Python ETL and dbt can use them
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
       DB_NAME: ${DB_NAME}
-      DB_HOST: db # IMPORTANT: Use the Docker service name for your DWH database
+      DB_HOST: db
       DB_PORT: ${DB_PORT}
-      CSV_PATH: /app/data/Fire_Incidents_20250515.csv # Path to your CSV inside the container
-      PREFECT_STORAGE_BLOCK: "local-repo-etl" # Used by prefect_deploy.py
+      CSV_PATH: /app/data/Fire_Incidents_20250515.csv
+      PREFECT_STORAGE_BLOCK: "local-repo-etl"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - prefect-agent-data:/root/.prefect
-      - .:/app # Mount the entire project directory here so all your code is available
+      - .:/app
     restart: always
     networks:
       - prefect-network
 
-# ---
-# Top-level Volumes and Networks definitions
-# These must be at the same indentation level as 'services'
-# ---
 volumes:
-  pg_data: # For your Fire Incidents DWH
-  prefect-server-data: # This volume now stores Prefect's SQLite DB
-  prefect-agent-data: # For agent specific data like logs etc.
+  pg_data:
+  prefect-server-data:
+  prefect-agent-data:
 
 networks:
   prefect-network:
