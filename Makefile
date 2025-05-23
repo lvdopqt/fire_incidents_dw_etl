@@ -1,20 +1,20 @@
 # .PHONY defines targets that do not correspond to file names
-.PHONY: up down build bash run-pipeline clean help
+.PHONY: up down build bash run-pipeline run-queries clean test help
 
 # Default target - shows help if no target is specified
 default: help
-
 
 # Displays available options
 help:
 	@echo "Usage: make <target>"
 	@echo ""
 	@echo "Targets:"
-	@echo "  up           - Starts the Docker Compose services (db, dbt) in detached mode."
+	@echo "  up           - Starts the Docker Compose services (db, prefect-server, prefect-agent) in detached mode."
 	@echo "  down         - Stops and removes the Docker Compose services."
-	@echo "  bash         - Accesses the bash shell inside the 'dbt' container."
-	@echo "  run-pipeline - Executes the full ETL pipeline script inside the 'dbt' container."
-	@echo "  clean        - Executes cleanup of dbt artifacts (e.g., dbt clean)."
+	@echo "  run-pipeline - Triggers a run of the Prefect ETL pipeline deployment."
+	@echo "  run-queries  - Executes example SQL queries against the data warehouse."
+	@echo "  test         - Run unit tests for the pipeline."
+	@echo "  clean        - Cleans dbt artifacts and Python cache."
 	@echo "  help         - Shows this help message."
 
 # Starts services in detached mode (-d)
@@ -22,6 +22,8 @@ up:
 	@echo "Starting Docker Compose services..."
 	docker compose up -d
 	@echo "Docker Compose services started."
+	@echo "Wait for Prefect server and agent to fully initialize and deployments/blocks to be created (approx. 20-30 seconds)..."
+	@sleep 30 # Give Prefect server and agent time to be fully ready and for deployments/blocks to be registered
 
 # Stops and removes services
 down:
@@ -29,53 +31,19 @@ down:
 	docker compose down
 	@echo "Docker Compose services stopped."
 
-build:
-	@echo "Building custom dbt Docker image..."
-	docker compose build dbt
-	@echo "Custom dbt Docker image built."
+# Triggers a run of the Prefect ETL pipeline deployment
+# Assumes 'fire-incidents-full-pipeline-deployment' is created by prefect_deploy.py
+# This command should be run from the host after 'make up' has completed and agent is running.
+run-pipeline:
+	@echo "Triggering Prefect ETL pipeline deployment 'fire-incidents-full-pipeline-deployment'..."
+	# Execute this command from the prefect-agent container as it has access to the Prefect API URL
+	docker compose exec prefect-agent python src/main_pipeline.py
+	@echo "Prefect ETL pipeline run triggered. Check Prefect UI (http://localhost:4200) for status."
 
-# Accesses the bash shell inside the dbt container
-bash:
-	@echo "Accessing 'dbt' container shell..."
-	docker compose exec dbt bash
-
-# Executes the full pipeline script inside the dbt container
-# This target depends on the 'up' target to ensure services are running
-run-pipeline: up
-	@echo "Sourcing .env for Makefile environment..."
-	# Source the variables from .env so they are available for make commands (e.g., pg_isready)
-	# This syntax works on most Linux/macOS shells. May vary on Windows.
-	- export $(cat .env | xargs)
-	@echo ".env sourced."
-
-	@echo "Checking database health..."
-	# Wait until the 'db' service is healthy. '-t 5' is a short timeout.
-	# Uses the variables from .env for the pg_isready connection.
-	docker compose exec db pg_isready -U ${DB_USER} -d ${DB_NAME} -t 5 || (echo "Error: Database is not healthy or accessible. Aborting." && exit 1)
-	@echo "Database is healthy."
-
-	@echo "Giving the pipeline file proper permissions"
-	chmod +x scripts/run_pipeline.sh
-
-	@echo "Executing run_pipeline.sh inside 'dbt' container..."
-	# The run_pipeline.sh script is mapped to /app/scripts/run_pipeline.sh inside the container
-	docker compose exec dbt bash -c "/app/scripts/run_pipeline.sh"
-	@echo "Pipeline execution finished."
-
-# Cleans dbt artifacts
-clean:
-	@echo "Running dbt clean inside 'dbt' container..."
-	docker compose exec dbt bash -c "cd /usr/app && dbt clean"
-	@echo "dbt clean finished."
-
-# Check database health
-db-health:
-	@echo "Checking database health..."
-	docker compose exec db pg_isready -U ${DB_USER} -d ${DB_NAME} -t 5 || (echo "Error: Database is not healthy or accessible. Aborting." && exit 1)
-	@echo "Database is healthy."
-
-# Run example SQL queries with hardcoded credentials and output to files (redirecting inside container)
-run-queries: up db-health
+# Executes example SQL queries against the data warehouse
+# Assumes 'fire-incidents-full-pipeline-deployment' is created by prefect_deploy.py
+# This command should be run from the host after 'make up' has completed and agent is running.
+run-queries:
 	@echo "Running example SQL queries and saving output to reports/..."
 	# Execute a bash command inside the db container that runs psql and redirects output
 	# Query 1: Total number of incidents per year
@@ -86,15 +54,19 @@ run-queries: up db-health
 	docker compose exec db bash -c "psql -U admin -d fire_dwh_db -c \"SELECT b.battalion_name, AVG(f.suppression_units) AS average_suppression_units FROM public.fct_fire_incidents f JOIN public.dim_battalion b ON f.battalion_key = b.battalion_key WHERE f.suppression_units IS NOT NULL GROUP BY b.battalion_name ORDER BY average_suppression_units DESC;\" > /app/reports/query_3_avg_units_per_battalion.txt"
 	@echo "Example SQL queries finished. Results saved in the reports/ directory."
 
-# Runs the pytest test suite inside the dbt container
-test: up db-health
-	@echo "Sourcing .env for Makefile environment..."
-	# Ensure .env variables are available for tests (especially DB connection details)
-	- export $(cat .env | xargs)
-	@echo ".env sourced."
 
-	@echo "Running tests inside 'dbt' container..."
-	# Assuming your code and test file (e.g., test_etl_script.py) are mounted to /usr/app
-	# Adjust the 'cd /usr/app' path if your docker-compose.yml maps your project code elsewhere
-	docker compose exec dbt bash -c "cd /app && pytest -v -s"
-	@echo "Test execution finished."
+# Runs unit tests using pytest inside the prefect-agent container
+test:
+	@echo "Running unit tests..."
+	docker compose exec prefect-agent pytest tests/
+	@echo "Unit tests finished."
+
+# Cleans dbt artifacts, Python cache, and other temporary files
+clean:
+	@echo "Cleaning dbt artifacts and Python cache..."
+	# Clean dbt artifacts inside the prefect-agent container
+	docker compose exec prefect-agent dbt clean --profiles-dir /app/dbt_project --project-dir /app/dbt_project || true
+	# Remove __pycache__ and .pytest_cache locally (outside container, as they are host-mounted)
+	find . -type d -name "__pycache__" -exec rm -rf {} + || true
+	find . -type d -name ".pytest_cache" -exec rm -rf {} + || true
+	@echo "Clean-up complete."

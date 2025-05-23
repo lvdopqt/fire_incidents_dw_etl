@@ -1,5 +1,16 @@
-SELECT
+{{
+    config(
+        materialized='table',
+        indexes=[
+            {'columns': ['time_key'], 'unique': True, 'type': 'btree'},
+            {'columns': ['date_day'], 'unique': True, 'type': 'btree'},
+            {'columns': ['year'], 'type': 'btree'},
+            {'columns': ['quarter'], 'type': 'btree'}
+        ]
+    )
+}}
 
+SELECT
     TO_CHAR(incident_date, 'YYYYMMDD')::INT AS time_key,
     incident_date AS date_day,
     EXTRACT(YEAR FROM incident_date)::INT AS year,
@@ -14,7 +25,6 @@ SELECT
 
 FROM (
     SELECT DISTINCT incident_date
-
     FROM {{ ref('base_fire_incidents') }}
     WHERE incident_date IS NOT NULL
 ) AS unique_incident_dates

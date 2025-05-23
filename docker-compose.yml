@@ -1,53 +1,103 @@
 services:
+  # PostgreSQL Database for your Fire Incidents DWH
   db:
-    image: postgres:16
-    container_name: postgres_db
-    platform: linux/arm64 # Ensure DB runs natively
-    ports:
-      - "5432:5432"
+    image: postgres:15-alpine
+    container_name: fire_incidents_db
+    restart: always
     environment:
+      POSTGRES_DB: ${DB_NAME}
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: ${DB_NAME}
+    ports:
+      - "${DB_PORT}:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./reports:/app/reports
-      - ./scripts:/app/scripts
-      - ./.env:/app/.env
-    env_file:
-      - ./.env
+      - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - prefect-network
 
-  dbt:
-    build: . # Build from the Dockerfile in the current directory
-    container_name: dbt_container
-    depends_on:
-      db:
-        condition: service_healthy
+  # Prefect Server (now using SQLite)
+  prefect-server:
+    image: prefecthq/prefect:2-latest
+    container_name: prefect_server
+    command: prefect server start --host 0.0.0.0
+    ports:
+      - "4200:4200"
     environment:
+      PREFECT_LOGGING_LEVEL: INFO
+      # Prefect will default to an SQLite database file inside its /root/.prefect directory
+    volumes:
+      - prefect-server-data:/root/.prefect # This volume will now store your SQLite DB file
+    restart: always
+    networks:
+      - prefect-network
+
+  # Prefect Agent
+  prefect-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    depends_on:
+      prefect-server:
+        condition: service_started
+      db: # Agent still depends on your DWH database
+        condition: service_healthy
+    command: >
+      /bin/bash -c "
+        echo 'Waiting for Prefect server and DWH database to be ready...'
+        sleep 15; # Give some time for services to fully initialize
+
+        echo 'Attempting to create work pool default-agent-pool...'
+        prefect work-pool create 'default-agent-pool' --type "docker" || echo 'Work pool default-agent-pool already exists or creation failed (ignored).'
+
+        echo 'Setting PREFECT_API_URL for Python scripts...'
+        prefect config set PREFECT_API_URL=http://prefect-server:4200/api
+
+        # --- NEW: Run block creation script first ---
+        echo 'Creating Prefect Blocks via create_blocks.py...'
+        python create_blocks.py
+
+        # --- Then run deployment script ---
+        echo 'Building and applying deployment fire-incidents-full-pipeline-deployment...'
+        python prefect_deploy.py
+
+        echo 'Deployment command finished. Starting agent...'
+        prefect agent start --pool 'default-agent-pool'
+      "
+    environment:
+      PREFECT_API_URL: http://prefect-server:4200/api
+      PYTHONPATH: /app
+      PROJECT_ROOT: /app
+      STREAMLIT_SHOW_WARNING_ON_DIRECT_EXECUTION: "false"
+      # Pass DB credentials to the agent so your Python ETL and dbt can use them
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
       DB_NAME: ${DB_NAME}
-      DB_HOST: db
-      DB_PORT: 5432
-      CSV_PATH: ${CSV_PATH}
+      DB_HOST: db # IMPORTANT: Use the Docker service name for your DWH database
+      DB_PORT: ${DB_PORT}
+      CSV_PATH: /app/data/Fire_Incidents_20250515.csv # Path to your CSV inside the container
+      PREFECT_STORAGE_BLOCK: "local-repo-etl" # Used by prefect_deploy.py
     volumes:
-      - ./dbt_project:/usr/app
-      - ./.dbt/profiles.yml:/root/.dbt/profiles.yml
-      - ./data:/app/data
-      - ./src:/app/src
-      - ./scripts:/app/scripts
-      - ./requirements.txt:/app/requirements.txt
-      - ./reports:/app/reports
-      - ./.env:/app/.env
-    env_file:
-      - .env
-    stdin_open: true
-    tty: true
+      - /var/run/docker.sock:/var/run/docker.sock
+      - prefect-agent-data:/root/.prefect
+      - .:/app # Mount the entire project directory here so all your code is available
+    restart: always
+    networks:
+      - prefect-network
 
+# ---
+# Top-level Volumes and Networks definitions
+# These must be at the same indentation level as 'services'
+# ---
 volumes:
-  postgres_data:
+  pg_data: # For your Fire Incidents DWH
+  prefect-server-data: # This volume now stores Prefect's SQLite DB
+  prefect-agent-data: # For agent specific data like logs etc.
+
+networks:
+  prefect-network:
+    driver: bridge

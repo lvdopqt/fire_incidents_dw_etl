@@ -1,7 +1,53 @@
 version: 2
 
 sources:
-  - name: public
+  - name: fire_department_raw # This should match the first argument in {{ source() }}
     database: "{{ env_var('DB_NAME') }}"
+    schema: public # Assuming your stg_fire_incidents_raw table is in the 'public' schema
     tables:
       - name: stg_fire_incidents_raw
+        # Add the loaded_at_field for dbt source freshness checks
+        loaded_at_field: data_loaded_at_dttm
+        columns:
+          - name: incident_number
+            description: "Unique identifier for the incident."
+          - name: exposure_number
+            description: "Number indicating the specific exposure or event within an incident."
+          - name: original_id
+            description: "Original ID from the source system."
+          - name: incident_date
+            description: "Date of the incident."
+          - name: alarm_dttm
+            description: "Timestamp when the alarm was received."
+          - name: arrival_dttm
+            description: "Timestamp when first unit arrived on scene."
+          - name: close_dttm
+            description: "Timestamp when the incident was closed."
+          - name: city_name
+            description: "City where the incident occurred."
+          - name: zipcode
+            description: "Zipcode of the incident location."
+          - name: battalion_name
+            description: "Name of the fire battalion."
+          - name: station_area
+            description: "Fire station area."
+          - name: supervisor_district
+            description: "Supervisor district where the incident occurred."
+          - name: neighborhood_district
+            description: "Neighborhood district where the incident occurred."
+          - name: geo_point
+            description: "Geographical coordinates of the incident."
+          - name: data_as_of_dttm
+            description: "Timestamp indicating when the data was last updated in the source system."
+          - name: data_loaded_at_dttm
+            description: "Timestamp indicating when the data was loaded into the raw staging table by the ETL script."
+          - name: number_of_alarms
+            description: "Number of alarms for the incident."
+          - name: primary_situation
+            description: "Primary situation encountered at the incident."
+          - name: property_use
+            description: "Type of property use."
+          - name: suppression_units
+            description: "Number of suppression units dispatched."
+          - name: ems_units
+            description: "Number of EMS units dispatched."

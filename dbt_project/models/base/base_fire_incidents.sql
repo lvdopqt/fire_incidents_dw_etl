@@ -1,14 +1,13 @@
 SELECT
-
     incidentnumber::TEXT AS incident_number,
     exposurenumber::INTEGER AS exposure_number,
     id::TEXT AS original_id,
     address::TEXT AS address,
-    NULLIF(TRIM(incidentdate), '')::DATE AS incident_date,
+    incidentdate::DATE AS incident_date, -- Removed TRIM and NULLIF
     callnumber::INTEGER AS call_number,
-    NULLIF(TRIM(alarmdttm), '')::TIMESTAMP AS alarm_dttm,
-    NULLIF(TRIM(arrivaldttm), '')::TIMESTAMP AS arrival_dttm,
-    NULLIF(TRIM(closedttm), '')::TIMESTAMP AS close_dttm,
+    alarmdttm::TIMESTAMP AS alarm_dttm, -- Removed TRIM and NULLIF
+    arrivaldttm::TIMESTAMP AS arrival_dttm, -- Removed TRIM and NULLIF
+    closedttm::TIMESTAMP AS close_dttm, -- Removed TRIM and NULLIF
     city::TEXT AS city_name,
     zipcode::TEXT AS zipcode,
     battalion::TEXT AS battalion_name,
@@ -21,8 +20,12 @@ SELECT
     otherunits::INTEGER AS other_units,
     otherpersonnel::INTEGER AS other_personnel,
     firstunitonscene::TEXT AS first_unit_arrived,
-    NULLIF(TRIM(estimatedpropertyloss), '')::NUMERIC AS est_property_loss,
-    NULLIF(TRIM(estimatedcontentsloss), '')::NUMERIC AS est_contents_loss,
+    -- For NUMERIC fields, keep NULLIF(TRIM(...), '') if they were loaded as TEXT and need handling
+    -- but your Python script now handles them as NUMERIC/FLOAT64 to Int64, so they should be clean.
+    -- If your Python script loads these directly as NUMERIC, you can simplify them too.
+    -- Based on the previous successful load, estimatedpropertyloss is NUMERIC, so we can simplify.
+    estimatedpropertyloss::NUMERIC AS est_property_loss, -- Simplified
+    estimatedcontentsloss::NUMERIC AS est_contents_loss, -- Simplified
     firefatalities::INTEGER AS fire_fatalities,
     fireinjuries::INTEGER AS fire_injuries,
     civilianfatalities::INTEGER AS civilian_fatalities,
@@ -46,7 +49,7 @@ SELECT
     structurestatus::TEXT AS structure_status,
     flooroffireorigin::TEXT AS floor_of_fire_origin,
     firespread::TEXT AS fire_spread,
-    NULLIF(TRIM(noflamespread), '')::NUMERIC AS no_flame_spread,
+    noflamespread::NUMERIC AS no_flame_spread, -- Simplified
     numberoffloorswithminimumdamage::INTEGER AS number_of_floors_with_minimum_damage,
     numberoffloorswithsignificantdamage::INTEGER AS number_of_floors_with_significant_damage,
     numberoffloorswithheavydamage::INTEGER AS number_of_floors_with_heavy_damage,
@@ -64,7 +67,7 @@ SELECT
     supervisordistrict::TEXT AS supervisor_district,
     neighborhood_district::TEXT AS neighborhood_district,
     point::TEXT AS geo_point,
-    NULLIF(TRIM(data_as_of), '')::TIMESTAMP AS data_as_of_dttm,
-    NULLIF(TRIM(data_loaded_at), '')::TIMESTAMP AS data_loaded_at_dttm
+    data_as_of::TIMESTAMP AS data_as_of_dttm, -- Removed TRIM and NULLIF
+    data_loaded_at::TIMESTAMP AS data_loaded_at_dttm -- Removed TRIM and NULLIF
 
-FROM {{ source('public', 'stg_fire_incidents_raw') }}
+FROM {{ source('fire_department_raw', 'stg_fire_incidents_raw') }}

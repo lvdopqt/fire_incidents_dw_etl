@@ -8,3 +8,6 @@ pyarrow
 sqlfluff
 pytest
 pytest-mock
+prefect<3
+prefect-dbt
+pytest-asyncio
